@@ -8,7 +8,7 @@ from pathlib import Path
 
 from keepassxc_proxy_client.protocol import ResponseUnsuccesfulException
 
-from lib import AssociationsStore, Connection
+from keepassxc_proxy_cli.lib import AssociationsStore, Connection
 
 
 def list_associations(**args):
@@ -67,7 +67,9 @@ def by_path(**args):
         exit(int(error.args[0]["errorCode"]))
 
 
-def main(argv):
+def main():
+    argv = sys.argv[1:]
+
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawTextHelpFormatter,
         prog='kpproxycli',
@@ -141,4 +143,4 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    main()
