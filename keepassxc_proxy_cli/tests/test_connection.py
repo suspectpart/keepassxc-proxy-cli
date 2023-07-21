@@ -81,14 +81,24 @@ class ConnectionTests(unittest.TestCase):
 
     def test_get_all_logins(self):
         # Arrange
-        expected = {
-            'group': 'Root',
-            'login': 'example_user',
-            'name': 'Example Account',
-            'password': '3x4mpl3 p4zzw0rd',
-            'stringFields': [],
-            'uuid': 'bbb816c3ebcb476a8de7c65ec1a9dfb8'
-        }
+        expected = [
+            {
+                'group': 'Root',
+                'login': 'Some User',
+                'name': 'Another Example Account',
+                'password': 'super secure passphrase',
+                'stringFields': [],
+                'uuid': '1b6dd67619a94148bdf37a46ff7ccbef'
+            },
+            {
+                'group': 'Root',
+                'login': 'example_user',
+                'name': 'Example Account',
+                'password': '3x4mpl3 p4zzw0rd',
+                'stringFields': [],
+                'uuid': 'bbb816c3ebcb476a8de7c65ec1a9dfb8'
+            },
+        ]
 
         # System Under Test
         with Connection.bootstrap(self.associations_store) as connection:
@@ -96,8 +106,7 @@ class ConnectionTests(unittest.TestCase):
             logins = connection.get_all_logins('https://example.com')
 
         # Assert
-        self.assertEqual(1, len(logins))
-        self.assertEqual(expected, logins.pop())
+        self.assertEqual(expected, logins)
 
     def test_get_logins_by_path(self):
         # Arrange
@@ -109,6 +118,7 @@ class ConnectionTests(unittest.TestCase):
             'stringFields': [],
             'uuid': '05736f4542254a6ea75ecdba07a35863'
         }
+
         # System Under Test
         with Connection.bootstrap(self.associations_store) as connection:
             # Act
@@ -131,7 +141,8 @@ class ConnectionTests(unittest.TestCase):
         # System Under Test
         with Connection.bootstrap(self.associations_store) as connection:
             # Act
-            login = connection.get_login_by_uuid('05736f4542254a6ea75ecdba07a35863')
+            logins = connection.get_logins_by_uuid('05736f4542254a6ea75ecdba07a35863')
 
         # Assert
-        self.assertEqual(expected, login)
+        self.assertEqual(1, len(logins))
+        self.assertEqual(expected, logins.pop())

@@ -1,70 +1,77 @@
 #!/usr/bin/env python
 import argparse
+import functools
 import json
 import os
 import sys
-import traceback
 from pathlib import Path
-
-from keepassxc_proxy_client.protocol import ResponseUnsuccesfulException
 
 from keepassxc_proxy_cli.lib import AssociationsStore, Connection
 
 
-def list_associations(**args):
-    return AssociationsStore(args['associations_file']).dump_table()
+def with_keepass_connection(func):
+    """Wraps a function to inject a bootstrapped connection context."""
+
+    @functools.wraps(func)
+    def wrapper(args):
+        associations = AssociationsStore(args.associations_file)
+
+        with Connection.bootstrap(associations, args.wait_for_unlock) as connection:
+            return func(connection, args)
+
+    return wrapper
 
 
-def get_all_logins(**args):
-    try:
-        association_store = AssociationsStore(args['associations_file'])
-        connection = Connection.bootstrap(
-            association_store,
-            wait_for_unlock=args.get('wait_for_unlock'),
-        )
-        credentials = connection.get_all_logins(args.get('url'))
+def filter_json(func):
+    """Runs dicts returned by func through json.dumps()."""
 
-        if len(credentials) == 1 and args.get('password_only'):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+
+        return result if isinstance(result, str) else json.dumps(result)
+
+    return wrapper
+
+
+def filter_single_password(func):
+    """Wherever applicable, just return a single password if requested."""
+
+    @functools.wraps(func)
+    def wrapper(connection, args):
+        credentials = func(connection, args)
+
+        if len(credentials) == 1 and args.password_only:
             return credentials[0]["password"]
 
-        return json.dumps(credentials)
+        return credentials
 
-    except ResponseUnsuccesfulException as error:
-        traceback.print_exc()
-        exit(int(error.args[0]["errorCode"]))
+    return wrapper
 
 
-def by_uuid(**args):
-    try:
-        connection = Connection.bootstrap(
-            AssociationsStore(args['associations_file']),
-            wait_for_unlock=args.get('wait_for_unlock'),
-        )
-        credentials = connection.get_login_by_uuid(args.get('uuid'))
-
-        return credentials['password'] if args['password_only'] else credentials
-
-    except ResponseUnsuccesfulException as error:
-        traceback.print_exc()
-        exit(int(error.args[0]["errorCode"]))
+def list_associations(args):
+    return AssociationsStore(args.associations_file).dump_table()
 
 
-def by_path(**args):
-    try:
-        connection = Connection.bootstrap(
-            AssociationsStore(args['associations_file']),
-            wait_for_unlock=args.get('wait_for_unlock'),
-        )
-        credentials = connection.get_logins_by_path(args.get('path'))
+@with_keepass_connection
+@filter_single_password
+@filter_json
+def get_all_logins(connection, args):
+    return connection.get_all_logins(args.url)
 
-        if len(credentials) == 1 and args.get('password_only'):
-            return credentials[0]["password"]
 
-        return json.dumps(credentials)
+@with_keepass_connection
+@filter_single_password
+@filter_json
+def by_uuid(connection, args):
+    return connection.get_logins_by_uuid(args.uuid)
 
-    except ResponseUnsuccesfulException as error:
-        traceback.print_exc()
-        exit(int(error.args[0]["errorCode"]))
+
+@with_keepass_connection
+@filter_single_password
+@filter_json
+def by_path(connection, args):
+    return connection.get_logins_by_path(args.path)
 
 
 def main():
@@ -137,7 +144,7 @@ def main():
     if "func" in args:
         end = '' if args.password_only else '\n'
 
-        print(args.func(**vars(args)), end=end)
+        print(args.func(args), end=end)
     else:
         parser.print_help()
 

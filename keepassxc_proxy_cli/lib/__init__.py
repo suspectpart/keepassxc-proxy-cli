@@ -9,6 +9,7 @@ from datetime import datetime
 from enum import IntEnum
 from pathlib import Path
 from time import sleep
+from typing import Optional
 
 from keepassxc_proxy_client import protocol
 from keepassxc_proxy_client.protocol import ResponseUnsuccesfulException, WinNamedPipe
@@ -55,7 +56,7 @@ class AssociationsStore:
         self._associations_file = associations_file
         self.__associations = None
 
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> Optional[dict]:
         if not self.__associations:
             self.__associations = self.__load_associations()
 
@@ -277,12 +278,12 @@ class Connection(protocol.Connection):
 
         return response["entries"]
 
-    def get_login_by_uuid(self, uuid: str):
+    def get_logins_by_uuid(self, uuid: str):
         """Get single login by uuid of database entry.
 
         Uses magic keepassxc:// protocol.
         """
-        return self.get_all_logins(f'keepassxc://by-uuid/{uuid}')[0]
+        return self.get_all_logins(f'keepassxc://by-uuid/{uuid}')
 
     def get_logins_by_path(self, path: str):
         """Get logins by path of database entry.
