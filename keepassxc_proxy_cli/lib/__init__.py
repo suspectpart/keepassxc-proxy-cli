@@ -2,14 +2,16 @@ import base64
 import json
 import logging
 import os
+import platform
 import socket
+import traceback
 from datetime import datetime
 from enum import IntEnum
 from pathlib import Path
 from time import sleep
 
 from keepassxc_proxy_client import protocol
-from keepassxc_proxy_client.protocol import ResponseUnsuccesfulException
+from keepassxc_proxy_client.protocol import ResponseUnsuccesfulException, WinNamedPipe
 from tabulate import tabulate
 
 logging.basicConfig(
@@ -106,12 +108,58 @@ class Connection(protocol.Connection):
 
         self.associations_store = associations_store
 
-    def reconnect(self):
-        """Reconnect to Keepass UNIX Socket."""
-        self.socket.shutdown(1)
+    def reconnect(self, test_associate=False):
+        """Reconnect to Keepass UNIX Socket.
+
+        Reconnecting opens up a fresh socket and performs a key exchange.
+        If your connection has been associated before, you need to pass
+        True for test_associate in order to reestablish association as well,
+        otherwise requests will fail with ERROR_KEEPASS_ASSOCIATION_FAILED (8).
+
+        Args:
+            test_associate: Whether associations should be (re-)established.
+
+        Returns:
+            The connection.
+
+        Notes:
+            Untested in Windows. I just copied the socket logic from the
+            base connection class, but I don't know what I am doing exactly.
+        """
         self.socket.close()
-        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+        if platform.system() == "Windows":
+            import win32file  # noqa
+            self.socket = WinNamedPipe(
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                win32file.OPEN_EXISTING,
+            )
+        else:
+            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
         self.connect()
+
+        if test_associate:
+            self.test_associate(False)
+
+        return self
+
+    def __enter__(self):
+        """Reconnect and return connection."""
+        self.reconnect(test_associate=True)
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Close underlying socket.
+
+        If there was an error returned by the socket, bubble it as SystemExit.
+        """
+        self.socket.close()
+
+        if exc_type and exc_type == ResponseUnsuccesfulException:
+            traceback.print_exc()
+            exit(int(exc_val.args[0]["errorCode"]))
 
     @classmethod
     def bootstrap(cls, associations: AssociationsStore, wait_for_unlock: int = 30):
