@@ -108,16 +108,16 @@ class Connection(protocol.Connection):
 
         self.associations_store = associations_store
 
-    def reconnect(self, test_associate=False):
+    def reconnect(self, test_associate=True):
         """Reconnect to Keepass UNIX Socket.
 
-        Reconnecting opens up a fresh socket and performs a key exchange.
-        If your connection has been associated before, you need to pass
-        True for test_associate in order to reestablish association as well,
+        Reconnecting opens up a fresh socket and performs a new key exchange.
+        If your connection has been associated before, test_associate must be
+        set to True in order to reestablish the association as well,
         otherwise requests will fail with ERROR_KEEPASS_ASSOCIATION_FAILED (8).
 
         Args:
-            test_associate: Whether associations should be (re-)established.
+            test_associate: Whether (re-)established the connection association.
 
         Returns:
             The connection.
@@ -140,7 +140,7 @@ class Connection(protocol.Connection):
         self.connect()
 
         if test_associate:
-            self.test_associate(False)
+            self.test_associate(trigger_unlock=False)
 
         return self
 
@@ -162,7 +162,25 @@ class Connection(protocol.Connection):
             exit(int(exc_val.args[0]["errorCode"]))
 
     @classmethod
-    def bootstrap(cls, associations: AssociationsStore, wait_for_unlock: int = 30):
+    def bootstrap(cls, associations: AssociationsStore, wait_for_unlock: int = 0):
+        """Create a fully usable connection from scratch.
+
+        A usable connection needs several things:
+         - a private / public key pair, a nonce, and a randomly generated clientID
+         - a socket connected to 'org.keepassxc.KeePassXC.BrowserServer'
+         - an association shared with the open Keepass DB ('id' and 'id_public_key')
+         - the association to be tested with the connected DB
+
+        If wait_for_unlock > 1 and the DB is closed, trigger_unlock will be
+        requested (makes Keepass pop up a login dialog) and the keepassxc-proxy-cli
+        will interactively wait <wait_for_unlock> seconds for the user to unlock
+        the DB. If it is still closed after <wait_for_unlock> seconds, it will fail
+        with ERROR_KEEPASS_DATABASE_NOT_OPENED (8).
+
+        Args:
+            wait_for_unlock: Seconds to wait for user to unlock DB (default=0).
+            associations: Stored associations that can be reused.
+        """
         db_hash = version = None
         wait_for_unlock = countdown = max(0, int(wait_for_unlock))
         trigger_unlock = wait_for_unlock > 0
@@ -171,7 +189,12 @@ class Connection(protocol.Connection):
 
         while countdown >= 0:
             try:
-                connection.reconnect()
+                # No association loaded yet, so we only do a socket reconnect
+                # and key exchange without any association; the connection can not
+                # be used for anything else than retrieving the database hash at
+                # this point.
+                connection.reconnect(test_associate=False)
+
                 db_hash, version = connection.get_database_info(
                     trigger_unlock=trigger_unlock and countdown == wait_for_unlock
                 )
@@ -180,12 +203,15 @@ class Connection(protocol.Connection):
                 error_code = int(e.args[0]["errorCode"])
 
                 if error_code != ErrorCodes.ERROR_KEEPASS_DATABASE_NOT_OPENED:
+                    # If any error other than the DB being closed occurs,
+                    # there is no point in waiting.
                     raise
 
                 sleep(min(countdown, 1))
                 countdown -= 1
 
         if association := associations[db_hash]:
+            # There is a persisted association for this DB - use it.
             name = association["name"]
             public_key = unarmored(association["public_key"])
 
@@ -193,26 +219,43 @@ class Connection(protocol.Connection):
 
             logging.info(f'Reusing association {name!r}')
         else:
+            # No association for this DB - request a new one.
             connection.associate()
             name, public_key = connection.dump_associate()
             associations.store_association(db_hash, name, public_key, version)
 
             logging.info(f'Storing new association {name!r} ({armored(public_key)})')
 
+        # Socket connected and association loaded.
+        # Check back with Keepass DB to make this a usable connection.
         connection.test_associate(trigger_unlock)
 
         return connection
 
     def get_database_info(self, trigger_unlock=False):
-        message = {
-            "action": "get-databasehash",
-        }
-        self.send_encrypted_message(message, trigger_unlock=trigger_unlock)
+        """Like get_databasehash(), but it also reports the Keepass DB version.
+
+        It is also capable of requesting trigger_unlock with get_databasehash().
+        This is crucial to fire up the unlock dialog even when
+        the database has never been associated with
+        (because get_databasehash() does not require association).
+        """
+        self.send_encrypted_message(
+            {"action": "get-databasehash"},
+            trigger_unlock=trigger_unlock,
+        )
 
         response = self.get_encrypted_response()
         return response["hash"], response["version"]
 
     def get_all_logins(self, url):
+        """Like get_logins(), but it searches in all open databases.
+
+        Instead of just sending the id and public_key of the current association,
+        we send the keys of all known associations. If Keepass has multiple
+        open databases and is configured to search in all databases,
+        it finds logins in any of the provided associations.
+        """
         msg = {
             "action": "get-logins",
             "url": url,

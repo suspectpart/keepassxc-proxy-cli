@@ -18,11 +18,15 @@ class ConnectionTests(unittest.TestCase):
         )
 
     def assertIsClosed(self, socket):
+        """Assert that socket is closed.
+
+        Pretty sure this does not work in Windows :/.
+        """
         self.assertEqual(socket.fileno(), -1)
         self.assertTrue(socket._closed)
 
     def assertIsOpen(self, socket):
-        """Assert if a socket is open.
+        """Assert that socket is open.
 
         Pretty sure this does not work in Windows :/.
         """
@@ -37,7 +41,7 @@ class ConnectionTests(unittest.TestCase):
         ):
             connection.get_logins('Nix!')
 
-        self.assertTrue(connection.socket._closed)
+        self.assertIsClosed(connection.socket)
 
     def test_connection_context(self):
         """ContextManager of connection properly closes socket."""
@@ -53,8 +57,8 @@ class ConnectionTests(unittest.TestCase):
 
         self.assertIsClosed(connection.socket)
 
-    def test_manual_connect_and_disconnect(self):
-        """Can be reconnected many times"""
+    def test_subsequent_reconnects(self):
+        """Can be reconnected many times."""
         with Connection.bootstrap(self.associations_store) as connection:
             sockets = [
                 connection.reconnect().socket,
@@ -63,8 +67,7 @@ class ConnectionTests(unittest.TestCase):
                 connection.reconnect().socket,
             ]
 
-            # Still able to use the connection after subsequent reconnects
-            self.assertEqual(self.database_hash, connection.get_databasehash())
+            connection.get_logins('https://example.com')
 
             # Opened and closed 4 distinct sockets, only the last one being open
             self.assertEqual(len(set(sockets)), 4)
